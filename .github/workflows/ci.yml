@@ -32,18 +32,20 @@ jobs:
 
       - name: Generate Prisma client
         env:
-          DATABASE_URL: file:./dev.db
+          DATABASE_URL: file:./test.db
         run: npx prisma generate
 
       - name: Apply migrations
         env:
-          DATABASE_URL: file:./dev.db
-        run: npx prisma migrate deploy || npx prisma migrate dev --name ci --skip-seed
+          DATABASE_URL: file:./test.db
+        run: npx prisma migrate deploy
 
       - name: Seed database
         env:
-          DATABASE_URL: file:./dev.db
+          DATABASE_URL: file:./test.db
         run: node prisma/seed.js
 
       - name: Run tests
+        env:
+          DATABASE_URL: file:./test.db
         run: npm test
