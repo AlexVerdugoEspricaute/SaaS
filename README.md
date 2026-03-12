@@ -1,5 +1,3 @@
-# CI: [reemplaza OWNER/REPO en la URL del badge]
-![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)
 
 # SaaS MVP (SQLite)
 
