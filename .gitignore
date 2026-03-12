@@ -1,6 +1,13 @@
 node_modules/
 .env
 dev.db
+test.db
+test.db-journal
+*.db
+*.db-journal
 /.idea
 /.vscode
 npm-debug.log
+uploads/
+frontend/dist/
+frontend/build.log

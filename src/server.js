@@ -1,5 +1,9 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { detectFormat, convertFile } = require('./converter');
 
 const prisma = new PrismaClient();
 const app = express();
@@ -327,6 +331,108 @@ app.get('/tenants/:id/projects', authMiddleware, async (req, res) => {
     if (req.user.tenantId !== req.params.id) return res.status(403).json({ error: 'forbidden' });
     const projects = await prisma.project.findMany({ where: { tenantId: req.params.id } });
     res.json(projects);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── File conversion ───────────────────────────────────────────────────────────
+
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `${unique}${path.extname(file.originalname)}`);
+  },
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+});
+
+// POST /upload — upload a file and start a conversion job
+app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'file is required' });
+  const { targetFormat } = req.body;
+  if (!targetFormat) return res.status(400).json({ error: 'targetFormat is required' });
+
+  const inputFormat = detectFormat(req.file.originalname);
+  const outputFilename = `${path.parse(req.file.filename).name}.${targetFormat}`;
+  const outputPath = path.join(UPLOADS_DIR, outputFilename);
+
+  // Create job record (pending)
+  const job = await prisma.job.create({
+    data: {
+      userId: req.user.id,
+      tenantId: req.user.tenantId,
+      fileName: req.file.originalname,
+      inputFormat,
+      targetFormat,
+      status: 'pending',
+    },
+  });
+
+  // Run conversion asynchronously so the response is immediate
+  setImmediate(async () => {
+    try {
+      await convertFile({ inputPath: req.file.path, inputFormat, targetFormat, outputPath });
+      await prisma.job.update({
+        where: { id: job.id },
+        data: { status: 'done', outputPath: outputFilename },
+      });
+    } catch (err) {
+      await prisma.job.update({
+        where: { id: job.id },
+        data: { status: 'error', errorMessage: err.message },
+      });
+      // Clean up input file on error
+      fs.unlink(req.file.path, () => {});
+    }
+  });
+
+  res.status(202).json({ jobId: job.id, status: 'pending' });
+});
+
+// GET /jobs — list all jobs for the authenticated user's tenant
+app.get('/jobs', authMiddleware, async (req, res) => {
+  try {
+    const jobs = await prisma.job.findMany({
+      where: { tenantId: req.user.tenantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(jobs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /jobs/:id — get a single job
+app.get('/jobs/:id', authMiddleware, async (req, res) => {
+  try {
+    const job = await prisma.job.findUnique({ where: { id: req.params.id } });
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.tenantId !== req.user.tenantId) return res.status(403).json({ error: 'forbidden' });
+    res.json(job);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /download/:jobId — download the converted file
+app.get('/download/:jobId', authMiddleware, async (req, res) => {
+  try {
+    const job = await prisma.job.findUnique({ where: { id: req.params.jobId } });
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.tenantId !== req.user.tenantId) return res.status(403).json({ error: 'forbidden' });
+    if (job.status !== 'done' || !job.outputPath) {
+      return res.status(409).json({ error: `Job is not ready (status: ${job.status})` });
+    }
+    const filePath = path.join(UPLOADS_DIR, job.outputPath);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Output file not found' });
+    res.download(filePath, job.outputPath);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
