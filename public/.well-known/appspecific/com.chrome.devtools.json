@@ -1,0 +1,5 @@
+{
+  "name": "devtools-manifest",
+  "version": "1",
+  "description": "Probe file for Chrome DevTools/extensions"
+}

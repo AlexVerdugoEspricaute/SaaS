@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        env:
+          DATABASE_URL: file:./dev.db
+        run: npx prisma generate
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: file:./dev.db
+        run: npx prisma migrate deploy || npx prisma migrate dev --name ci --skip-seed
+
+      - name: Seed database
+        env:
+          DATABASE_URL: file:./dev.db
+        run: node prisma/seed.js
+
+      - name: Run tests
+        run: npm test

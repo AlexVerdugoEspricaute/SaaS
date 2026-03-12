@@ -1,0 +1,6 @@
+body{font-family: Arial, sans-serif; background:#f6f8fa}
+.container{max-width:720px;margin:48px auto;padding:24px;background:white;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+label{display:block;margin-top:12px}
+input{width:100%;padding:8px;margin-top:6px}
+button{margin-top:12px;padding:8px 12px}
+.error{color:#b00020}
