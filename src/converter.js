@@ -13,7 +13,7 @@ const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
 const xml2js = require('xml2js');
-const { convertPdfToJsonAI, convertTextWithAI } = require('./ai-converter');
+const { convertPdfToJsonAI, convertTextWithAI, convertWithAI } = require('./ai-converter');
 
 // Detect format from file extension
 function detectFormat(filename) {
@@ -26,40 +26,47 @@ function detectFormat(filename) {
 // Returns { outputPath } on success or throws on failure.
 async function convertFile({ inputPath, inputFormat, targetFormat, outputPath }) {
   const fmt = `${inputFormat}_to_${targetFormat}`;
+  let workbook = null; // Para limpiar recursos XLSX
+  let pdfBuffer = null; // Para limpiar recursos PDF
 
-  switch (fmt) {
+  try {
+    switch (fmt) {
     // ---------- XLSX / XLS → CSV ----------
     case 'xlsx_to_csv': {
-      const wb = XLSX.readFile(inputPath);
-      const ws = wb.Sheets[wb.SheetNames[0]];
+      workbook = XLSX.readFile(inputPath);
+      const ws = workbook.Sheets[workbook.SheetNames[0]];
       const csv = XLSX.utils.sheet_to_csv(ws);
       fs.writeFileSync(outputPath, csv, 'utf8');
+      workbook = null; // Liberar referencia
       break;
     }
 
     // ---------- XLSX / XLS → JSON ----------
     case 'xlsx_to_json': {
-      const wb = XLSX.readFile(inputPath);
-      const ws = wb.Sheets[wb.SheetNames[0]];
+      workbook = XLSX.readFile(inputPath);
+      const ws = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws);
       fs.writeFileSync(outputPath, JSON.stringify(rows, null, 2), 'utf8');
+      workbook = null; // Liberar referencia
       break;
     }
 
     // ---------- CSV → XLSX ----------
     case 'csv_to_xlsx': {
       const raw = fs.readFileSync(inputPath, 'utf8');
-      const wb = XLSX.read(raw, { type: 'string' });
-      XLSX.writeFile(wb, outputPath);
+      workbook = XLSX.read(raw, { type: 'string' });
+      XLSX.writeFile(workbook, outputPath);
+      workbook = null; // Liberar referencia
       break;
     }
 
     // ---------- CSV → JSON ----------
     case 'csv_to_json': {
-      const wb = XLSX.readFile(inputPath);
-      const ws = wb.Sheets[wb.SheetNames[0]];
+      workbook = XLSX.readFile(inputPath);
+      const ws = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws);
       fs.writeFileSync(outputPath, JSON.stringify(rows, null, 2), 'utf8');
+      workbook = null; // Liberar referencia
       break;
     }
 
@@ -80,9 +87,10 @@ async function convertFile({ inputPath, inputFormat, targetFormat, outputPath })
       const data = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
       const rows = Array.isArray(data) ? data : [data];
       const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-      XLSX.writeFile(wb, outputPath);
+      workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, ws, 'Sheet1');
+      XLSX.writeFile(workbook, outputPath);
+      workbook = null; // Liberar referencia
       break;
     }
 
@@ -106,9 +114,10 @@ async function convertFile({ inputPath, inputFormat, targetFormat, outputPath })
     // ---------- PDF → TXT ----------
     case 'pdf_to_txt': {
       const pdfParse = require('pdf-parse');
-      const raw = fs.readFileSync(inputPath);
-      const parsed = await pdfParse(raw);
+      pdfBuffer = fs.readFileSync(inputPath);
+      const parsed = await pdfParse(pdfBuffer);
       fs.writeFileSync(outputPath, parsed.text || '', 'utf8');
+      pdfBuffer = null; // Liberar buffer
       break;
     }
 
@@ -125,10 +134,24 @@ async function convertFile({ inputPath, inputFormat, targetFormat, outputPath })
     }
 
     default:
-      throw new Error(`Conversion from ${inputFormat} to ${targetFormat} is not supported`);
-  }
+      // Intentar conversión con IA para formatos no soportados tradicionalmente
+      console.log(`[AI] Trying conversion ${inputFormat} → ${targetFormat} with DeepSeek`);
+      return await convertWithAI(inputPath, inputFormat, targetFormat, outputPath);
+    }
 
-  return { outputPath };
+    return { outputPath };
+  
+  } catch (error) {
+    console.error(`Conversion error (${inputFormat} → ${targetFormat}):`, error.message);
+    throw error;
+  } finally {
+    // Forzar limpieza de memoria
+    workbook = null;
+    pdfBuffer = null;
+    if (global.gc) {
+      try { global.gc(); } catch (e) { /* ignore */ }
+    }
+  }
 }
 
 module.exports = { detectFormat, convertFile };

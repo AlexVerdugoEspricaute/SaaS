@@ -341,6 +341,38 @@ app.get('/tenants/:id/projects', authMiddleware, async (req, res) => {
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
+// Función para limpiar archivos temporales viejos
+function cleanupOldFiles() {
+  try {
+    const files = fs.readdirSync(UPLOADS_DIR);
+    const now = Date.now();
+    const ONE_HOUR = 60 * 60 * 1000; // 1 hora en milisegundos
+
+    files.forEach(file => {
+      const filePath = path.join(UPLOADS_DIR, file);
+      const stats = fs.statSync(filePath);
+      
+      // Eliminar archivos más viejos de 1 hora
+      if (now - stats.mtime.getTime() > ONE_HOUR) {
+        fs.unlink(filePath, (err) => {
+          if (err) console.warn(`[Cleanup] Failed to delete ${file}:`, err.message);
+          else console.log(`[Cleanup] Deleted old file: ${file}`);
+        });
+      }
+    });
+  } catch (error) {
+    console.warn('[Cleanup] Error during cleanup:', error.message);
+  }
+}
+
+// Ejecutar limpieza cada 30 minutos (solo cuando no se está ejecutando Jest)
+const isTestEnvironment = process.env.JEST_WORKER_ID !== undefined || process.argv[1]?.includes('jest');
+if (!isTestEnvironment) {
+  setInterval(cleanupOldFiles, 30 * 60 * 1000);
+  // Ejecutar limpieza inicial después de 1 minuto
+  setTimeout(cleanupOldFiles, 60 * 1000);
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
   filename: (_req, file, cb) => {
@@ -395,13 +427,23 @@ app.post('/upload', authMiddleware, uploadMiddleware, async (req, res) => {
           where: { id: job.id },
           data: { status: 'done', outputPath: outputFilename },
         });
+        
+        // Limpiar archivo temporal después de conversión exitosa
+        fs.unlink(inputPath, (err) => {
+          if (err) console.warn(`[job ${job.id}] cleanup warning:`, err.message);
+        });
+        
       } catch (err) {
         console.error(`[job ${job.id}] conversion error:`, err.message);
         await prisma.job.update({
           where: { id: job.id },
           data: { status: 'error', errorMessage: err.message },
         }).catch(() => {});
-        fs.unlink(inputPath, () => {});
+        
+        // Limpiar archivo temporal después de error
+        fs.unlink(inputPath, (cleanupErr) => {
+          if (cleanupErr) console.warn(`[job ${job.id}] cleanup error:`, cleanupErr.message);
+        });
       }
     });
 
