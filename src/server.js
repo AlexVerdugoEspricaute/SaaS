@@ -71,13 +71,23 @@ app.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'email and password required' });
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({
+      where: { email },
+      // Select only fields required for login to stay compatible with older DBs.
+      select: {
+        id: true,
+        email: true,
+        tenantId: true,
+        role: true,
+        passwordHash: true
+      }
+    });
     if (!user) return res.status(404).json({ error: 'user not found' });
     if (!user.passwordHash) return res.status(401).json({ error: 'password not set for user' });
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ error: 'invalid credentials' });
     const token = jwt.sign({ id: user.id, email: user.email, tenantId: user.tenantId, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
-    res.json({ token, passwordMustChange: !!user.passwordMustChange });
+    res.json({ token, passwordMustChange: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -85,9 +95,18 @@ app.post('/auth/login', async (req, res) => {
 
 app.get('/auth/me', authMiddleware, async (req, res) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        tenantId: true,
+        role: true
+      }
+    });
     if (!user) return res.status(404).json({ error: 'user not found' });
-    res.json({ id: user.id, email: user.email, name: user.name, tenantId: user.tenantId, role: user.role, passwordMustChange: !!user.passwordMustChange });
+    res.json({ id: user.id, email: user.email, name: user.name, tenantId: user.tenantId, role: user.role, passwordMustChange: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -98,7 +117,10 @@ app.post('/auth/change-password', authMiddleware, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!newPassword) return res.status(400).json({ error: 'newPassword required' });
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, passwordHash: true }
+    });
     if (!user) return res.status(404).json({ error: 'user not found' });
     // If user has a passwordHash, require currentPassword
     if (user.passwordHash) {
@@ -107,7 +129,15 @@ app.post('/auth/change-password', authMiddleware, async (req, res) => {
       if (!ok) return res.status(401).json({ error: 'invalid current password' });
     }
     const hash = await bcrypt.hash(newPassword, 10);
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, passwordMustChange: false } });
+    try {
+      await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, passwordMustChange: false } });
+    } catch (err) {
+      if (err && err.code === 'P2022') {
+        await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash } });
+      } else {
+        throw err;
+      }
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
