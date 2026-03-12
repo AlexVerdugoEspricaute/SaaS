@@ -5,6 +5,7 @@
  *   csv       → xlsx, json
  *   json      → csv, xml
  *   xml       → json
+ *   pdf       → txt, json (AI-powered)
  *   txt       → (pass-through)
  */
 
@@ -12,6 +13,7 @@ const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
 const xml2js = require('xml2js');
+const { convertPdfToJsonAI, convertTextWithAI } = require('./ai-converter');
 
 // Detect format from file extension
 function detectFormat(filename) {
@@ -98,6 +100,21 @@ async function convertFile({ inputPath, inputFormat, targetFormat, outputPath })
       const raw = fs.readFileSync(inputPath, 'utf8');
       const parsed = await xml2js.parseStringPromise(raw, { explicitArray: false });
       fs.writeFileSync(outputPath, JSON.stringify(parsed, null, 2), 'utf8');
+      break;
+    }
+
+    // ---------- PDF → TXT ----------
+    case 'pdf_to_txt': {
+      const pdfParse = require('pdf-parse');
+      const raw = fs.readFileSync(inputPath);
+      const parsed = await pdfParse(raw);
+      fs.writeFileSync(outputPath, parsed.text || '', 'utf8');
+      break;
+    }
+
+    // ---------- PDF → JSON (AI-powered) ----------
+    case 'pdf_to_json': {
+      await convertPdfToJsonAI(inputPath, outputPath);
       break;
     }
 

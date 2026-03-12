@@ -19,7 +19,7 @@ import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import DownloadIcon from '@mui/icons-material/Download'
 
-const targetFormats = ['xlsx', 'csv', 'json', 'xml', 'txt']
+const targetFormats = ['xlsx', 'csv', 'json', 'xml', 'txt', 'pdf']
 
 const STATUS_COLOR = { pending: 'warning', done: 'success', error: 'error' }
 const STATUS_LABEL = { pending: 'Procesando...', done: 'Listo', error: 'Error' }
