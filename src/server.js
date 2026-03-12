@@ -353,47 +353,63 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
 });
 
+// Multer error handler wrapper — convierte errores de multer en respuestas JSON
+function uploadMiddleware(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    next();
+  });
+}
+
 // POST /upload — upload a file and start a conversion job
-app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'file is required' });
-  const { targetFormat } = req.body;
-  if (!targetFormat) return res.status(400).json({ error: 'targetFormat is required' });
+app.post('/upload', authMiddleware, uploadMiddleware, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file is required' });
+    const { targetFormat } = req.body;
+    if (!targetFormat) return res.status(400).json({ error: 'targetFormat is required' });
 
-  const inputFormat = detectFormat(req.file.originalname);
-  const outputFilename = `${path.parse(req.file.filename).name}.${targetFormat}`;
-  const outputPath = path.join(UPLOADS_DIR, outputFilename);
+    const inputFormat = detectFormat(req.file.originalname);
+    const outputFilename = `${path.parse(req.file.filename).name}.${targetFormat}`;
+    const outputPath = path.join(UPLOADS_DIR, outputFilename);
 
-  // Create job record (pending)
-  const job = await prisma.job.create({
-    data: {
-      userId: req.user.id,
-      tenantId: req.user.tenantId,
-      fileName: req.file.originalname,
-      inputFormat,
-      targetFormat,
-      status: 'pending',
-    },
-  });
+    // Create job record (pending)
+    const job = await prisma.job.create({
+      data: {
+        userId: req.user.id,
+        tenantId: req.user.tenantId,
+        fileName: req.file.originalname,
+        inputFormat,
+        targetFormat,
+        status: 'pending',
+      },
+    });
 
-  // Run conversion asynchronously so the response is immediate
-  setImmediate(async () => {
-    try {
-      await convertFile({ inputPath: req.file.path, inputFormat, targetFormat, outputPath });
-      await prisma.job.update({
-        where: { id: job.id },
-        data: { status: 'done', outputPath: outputFilename },
-      });
-    } catch (err) {
-      await prisma.job.update({
-        where: { id: job.id },
-        data: { status: 'error', errorMessage: err.message },
-      });
-      // Clean up input file on error
-      fs.unlink(req.file.path, () => {});
-    }
-  });
+    // Guardar referencia al path antes del setImmediate
+    const inputPath = req.file.path;
 
-  res.status(202).json({ jobId: job.id, status: 'pending' });
+    // Run conversion asynchronously so the response is immediate
+    setImmediate(async () => {
+      try {
+        await convertFile({ inputPath, inputFormat, targetFormat, outputPath });
+        await prisma.job.update({
+          where: { id: job.id },
+          data: { status: 'done', outputPath: outputFilename },
+        });
+      } catch (err) {
+        console.error(`[job ${job.id}] conversion error:`, err.message);
+        await prisma.job.update({
+          where: { id: job.id },
+          data: { status: 'error', errorMessage: err.message },
+        }).catch(() => {});
+        fs.unlink(inputPath, () => {});
+      }
+    });
+
+    res.status(202).json({ jobId: job.id, status: 'pending' });
+  } catch (err) {
+    console.error('[POST /upload] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /jobs — list all jobs for the authenticated user's tenant
@@ -438,8 +454,25 @@ app.get('/download/:jobId', authMiddleware, async (req, res) => {
   }
 });
 
+// ─── Middleware global de errores Express ─────────────────────────────────────
+// Captura cualquier error que llegue con next(err) o un throw dentro de un handler
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[Express error]', err.message);
+  if (res.headersSent) return;
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+});
+
 const PORT = process.env.PORT || 4000;
 if (require.main === module) {
+  // Evitar que el proceso muera por errores no capturados
+  process.on('uncaughtException', (err) => {
+    console.error('[uncaughtException]', err.message);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason);
+  });
+
   const server = app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
   });

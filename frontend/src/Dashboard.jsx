@@ -1,27 +1,32 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box,
   Button,
   Chip,
   Container,
+  IconButton,
   Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   Typography,
   Alert,
-  List,
-  ListItem,
-  ListItemText,
-  Divider
+  Tooltip,
 } from '@mui/material'
+import RefreshIcon from '@mui/icons-material/Refresh'
+import DownloadIcon from '@mui/icons-material/Download'
 
-export default function Dashboard(){
+export default function Dashboard({ onLogout }){
   const [projects, setProjects] = useState([])
   const [jobs, setJobs] = useState([])
   const [error, setError] = useState(null)
   const navigate = useNavigate()
 
-  useEffect(()=>{
+  const fetchData = useCallback(() => {
     const token = localStorage.getItem('token')
     if (!token) return navigate('/login')
     fetch('http://localhost:4000/projects', {
@@ -43,11 +48,36 @@ export default function Dashboard(){
     })
     .then(data => setJobs(Array.isArray(data) ? data : []))
     .catch(() => setJobs([]))
-  },[])
+  }, [navigate])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  function downloadJob(job) {
+    const token = localStorage.getItem('token')
+    fetch(`http://localhost:4000/download/${job.id}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    .then(res => {
+      if (!res.ok) throw new Error('No se pudo descargar')
+      return res.blob()
+    })
+    .then(blob => {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = job.outputPath || `conversion.${job.targetFormat}`
+      a.click()
+      URL.revokeObjectURL(url)
+    })
+    .catch(err => setError(err.message))
+  }
 
   function logout(){
-    localStorage.removeItem('token')
-    navigate('/login')
+    if (onLogout) onLogout()
+    else {
+      localStorage.removeItem('token')
+      navigate('/login')
+    }
   }
 
   return (
@@ -67,50 +97,73 @@ export default function Dashboard(){
 
           {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
 
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} sx={{ mt: 3 }}>
-            <Paper variant="outlined" sx={{ flex: 1, p: 2, borderRadius: 2 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                <Typography variant="h6">Proyectos</Typography>
-                <Chip size="small" label={projects.length} />
-              </Stack>
-              <List dense>
-                {projects.map((p) => (
-                  <React.Fragment key={p.id}>
-                    <ListItem>
-                      <ListItemText primary={p.name} secondary={`Tenant: ${p.tenantId}`} />
-                    </ListItem>
-                    <Divider component="li" />
-                  </React.Fragment>
-                ))}
-                {projects.length === 0 && <Typography variant="body2" color="text.secondary">No hay proyectos disponibles.</Typography>}
-              </List>
-            </Paper>
-
-            <Paper variant="outlined" sx={{ flex: 1, p: 2, borderRadius: 2 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                <Typography variant="h6">Ultimos trabajos</Typography>
-                <Chip size="small" color="primary" label={jobs.length} />
-              </Stack>
-              <List dense>
-                {jobs.map((job) => (
-                  <React.Fragment key={job.id}>
-                    <ListItem>
-                      <ListItemText
-                        primary={job.fileName || `Trabajo ${job.id}`}
-                        secondary={`Estado: ${job.status || 'pendiente'} - ${job.targetFormat || 'sin formato'}`}
-                      />
-                    </ListItem>
-                    <Divider component="li" />
-                  </React.Fragment>
-                ))}
+          {/* Tabla de trabajos */}
+          <Paper variant="outlined" sx={{ mt: 3, borderRadius: 2, overflow: 'hidden' }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ px: 2, pt: 2 }}>
+              <Typography variant="h6">Conversiones</Typography>
+              <Tooltip title="Actualizar">
+                <IconButton onClick={fetchData} size="small"><RefreshIcon /></IconButton>
+              </Tooltip>
+            </Stack>
+            <Table size="small" sx={{ mt: 1 }}>
+              <TableHead>
+                <TableRow sx={{ bgcolor: 'grey.50' }}>
+                  <TableCell>Archivo</TableCell>
+                  <TableCell>De</TableCell>
+                  <TableCell>A</TableCell>
+                  <TableCell>Estado</TableCell>
+                  <TableCell>Fecha</TableCell>
+                  <TableCell align="right">Accion</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {jobs.length === 0 && (
-                  <Typography variant="body2" color="text.secondary">
-                    Aun no hay endpoint `/jobs` en backend o no hay conversiones creadas.
-                  </Typography>
+                  <TableRow>
+                    <TableCell colSpan={6} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                      No hay conversiones aun. Usa &quot;Nueva conversion&quot; para empezar.
+                    </TableCell>
+                  </TableRow>
                 )}
-              </List>
-            </Paper>
-          </Stack>
+                {jobs.map((job) => (
+                  <TableRow key={job.id} hover>
+                    <TableCell sx={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {job.fileName}
+                    </TableCell>
+                    <TableCell><Chip label={job.inputFormat?.toUpperCase()} size="small" variant="outlined" /></TableCell>
+                    <TableCell><Chip label={job.targetFormat?.toUpperCase()} size="small" color="primary" variant="outlined" /></TableCell>
+                    <TableCell>
+                      <Chip
+                        label={job.status === 'done' ? 'Listo' : job.status === 'error' ? 'Error' : 'Procesando'}
+                        color={job.status === 'done' ? 'success' : job.status === 'error' ? 'error' : 'warning'}
+                        size="small"
+                      />
+                    </TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap', color: 'text.secondary', fontSize: 12 }}>
+                      {new Date(job.createdAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell align="right">
+                      {job.status === 'done' && (
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="success"
+                          startIcon={<DownloadIcon />}
+                          onClick={() => downloadJob(job)}
+                        >
+                          Descargar
+                        </Button>
+                      )}
+                      {job.status === 'error' && (
+                        <Tooltip title={job.errorMessage || 'Error desconocido'}>
+                          <Chip label="Ver error" color="error" size="small" variant="outlined" />
+                        </Tooltip>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Paper>
         </Paper>
       </Container>
     </Box>

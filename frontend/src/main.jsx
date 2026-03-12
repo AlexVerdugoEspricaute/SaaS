@@ -7,12 +7,22 @@ import Upload from './Upload'
 import './styles.css'
 
 function App(){
-  const token = localStorage.getItem('token')
+  const [token, setToken] = React.useState(() => localStorage.getItem('token'))
+
+  function handleLogin(t) {
+    setToken(t)
+  }
+
+  function handleLogout() {
+    localStorage.removeItem('token')
+    setToken(null)
+  }
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<Login/>} />
-        <Route path="/dashboard" element={token ? <Dashboard/> : <Navigate to="/login" />} />
+        <Route path="/login" element={<Login onLogin={handleLogin}/>} />
+        <Route path="/dashboard" element={token ? <Dashboard onLogout={handleLogout}/> : <Navigate to="/login" />} />
         <Route path="/upload" element={token ? <Upload/> : <Navigate to="/login" />} />
         <Route path="/" element={<Navigate to={token ? "/dashboard" : "/login"} />} />
       </Routes>

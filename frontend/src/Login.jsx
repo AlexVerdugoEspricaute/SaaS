@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Container, TextField, Button, Typography, Box, Alert, Paper, Avatar } from '@mui/material'
 
-export default function Login(){
+export default function Login({ onLogin }){
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
@@ -20,6 +20,7 @@ export default function Login(){
       if (!res.ok) throw new Error((await res.json()).error || 'Login failed')
       const data = await res.json()
       localStorage.setItem('token', data.token)
+      onLogin(data.token)
       navigate('/dashboard')
     }catch(err){
       setError(err.message)

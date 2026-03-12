@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Alert,
   Box,
   Button,
   Chip,
+  CircularProgress,
   Container,
   FormControl,
   InputLabel,
@@ -16,24 +17,41 @@ import {
 } from '@mui/material'
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
+import DownloadIcon from '@mui/icons-material/Download'
 
-const targetFormats = [
-  'pdf',
-  'docx',
-  'xlsx',
-  'csv',
-  'txt',
-  'xml',
-  'json'
-]
+const targetFormats = ['xlsx', 'csv', 'json', 'xml', 'txt']
+
+const STATUS_COLOR = { pending: 'warning', done: 'success', error: 'error' }
+const STATUS_LABEL = { pending: 'Procesando...', done: 'Listo', error: 'Error' }
 
 export default function Upload(){
   const [file, setFile] = useState(null)
-  const [targetFormat, setTargetFormat] = useState('pdf')
+  const [targetFormat, setTargetFormat] = useState('csv')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
+  const [job, setJob] = useState(null)   // { jobId, status, errorMessage }
   const navigate = useNavigate()
+  const pollRef = useRef(null)
+
+  // Poll job status every 2s until done or error
+  useEffect(() => {
+    if (!job || job.status === 'done' || job.status === 'error') {
+      clearInterval(pollRef.current)
+      return
+    }
+    pollRef.current = setInterval(async () => {
+      const token = localStorage.getItem('token')
+      try {
+        const res = await fetch(`http://localhost:4000/jobs/${job.jobId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (!res.ok) return
+        const data = await res.json()
+        setJob(prev => ({ ...prev, status: data.status, errorMessage: data.errorMessage }))
+      } catch {}
+    }, 2000)
+    return () => clearInterval(pollRef.current)
+  }, [job?.jobId, job?.status])
 
   const readableFileSize = useMemo(() => {
     if (!file) return ''
@@ -46,10 +64,32 @@ export default function Upload(){
     navigate('/login')
   }
 
+  function handleDownload() {
+    const token = localStorage.getItem('token')
+    // Abrimos en nueva pestaña con el token en header no es posible via <a>,
+    // hacemos fetch + blob
+    fetch(`http://localhost:4000/download/${job.jobId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    .then(res => {
+      if (!res.ok) throw new Error('No se pudo descargar')
+      return res.blob()
+    })
+    .then(blob => {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `conversion.${targetFormat}`
+      a.click()
+      URL.revokeObjectURL(url)
+    })
+    .catch(err => setError(err.message))
+  }
+
   async function handleSubmit(e){
     e.preventDefault()
     setError(null)
-    setSuccess(null)
+    setJob(null)
 
     if (!file) {
       setError('Selecciona un archivo para convertir.')
@@ -57,10 +97,7 @@ export default function Upload(){
     }
 
     const token = localStorage.getItem('token')
-    if (!token) {
-      navigate('/login')
-      return
-    }
+    if (!token) { navigate('/login'); return }
 
     try {
       setLoading(true)
@@ -80,7 +117,7 @@ export default function Upload(){
       }
 
       const data = await res.json()
-      setSuccess(`Conversion creada. Job ID: ${data.id || 'pendiente'}`)
+      setJob({ jobId: data.jobId, status: data.status })
       setFile(null)
     } catch (err) {
       setError(err.message)
@@ -147,10 +184,37 @@ export default function Upload(){
             </FormControl>
 
             {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
-            {success && <Alert severity="success" sx={{ mt: 2 }}>{success}</Alert>}
+
+            {job && (
+              <Paper variant="outlined" sx={{ mt: 2, p: 2, borderRadius: 2 }}>
+                <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap">
+                  <Typography variant="body2" color="text.secondary">Estado:</Typography>
+                  <Chip
+                    label={STATUS_LABEL[job.status] || job.status}
+                    color={STATUS_COLOR[job.status] || 'default'}
+                    size="small"
+                    icon={job.status === 'pending' ? <CircularProgress size={12} color="inherit" /> : undefined}
+                  />
+                  {job.status === 'done' && (
+                    <Button
+                      variant="contained"
+                      color="success"
+                      size="small"
+                      startIcon={<DownloadIcon />}
+                      onClick={handleDownload}
+                    >
+                      Descargar {targetFormat.toUpperCase()}
+                    </Button>
+                  )}
+                  {job.status === 'error' && (
+                    <Typography variant="body2" color="error">{job.errorMessage}</Typography>
+                  )}
+                </Stack>
+              </Paper>
+            )}
 
             <Button type="submit" variant="contained" size="large" sx={{ mt: 3 }} disabled={loading}>
-              {loading ? 'Creando conversion...' : 'Convertir archivo'}
+              {loading ? 'Subiendo...' : 'Convertir archivo'}
             </Button>
           </Box>
         </Paper>
