@@ -15,11 +15,19 @@ async function main() {
   const bcrypt = require('bcryptjs');
   const password = 'admin';
   const passwordHash = await bcrypt.hash(password, 10);
+  // Upsert without `passwordMustChange` to avoid failures if the column doesn't exist in DB
   const user = await prisma.user.upsert({
     where: { email: 'admin@acme.test' },
-    update: { name: 'Admin', tenantId: tenant.id, passwordHash, role: 'ADMIN', passwordMustChange: true },
-    create: { email: 'admin@acme.test', name: 'Admin', tenantId: tenant.id, passwordHash, role: 'ADMIN', passwordMustChange: true }
+    update: { name: 'Admin', tenantId: tenant.id, passwordHash, role: 'ADMIN' },
+    create: { email: 'admin@acme.test', name: 'Admin', tenantId: tenant.id, passwordHash, role: 'ADMIN' }
   });
+
+  // Try to set `passwordMustChange` if the column exists (some DB states/migrations might not have it)
+  try {
+    await prisma.user.update({ where: { email: user.email }, data: { passwordMustChange: true } });
+  } catch (e) {
+    // Ignore error if column doesn't exist (e.g., P2022) — seed can continue without this flag
+  }
 
   // Project: ensure project for this tenant exists (name not unique globally)
   const projectName = 'Demo Project';
