@@ -11,3 +11,17 @@ npm-debug.log
 uploads/
 frontend/dist/
 frontend/build.log
+
+# Test files and temporary data
+test_*.js
+test_*.csv
+test_*.json
+test_*.txt
+test_*.xml
+*test*.js
+final_test.js
+frontend_*_demo.js
+seq*.json
+seq*.csv
+seq*.xml
+seq*.txt
